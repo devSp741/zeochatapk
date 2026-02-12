@@ -67,3 +67,11 @@ Example:
 ```xml
 <color name="purple_500">#E91E63</color> <!-- Change to your brand color -->
 ```
+
+### 5. Customize "No Internet" Screen
+
+The app shows a custom screen when there is no internet connection.
+
+- **Icon**: The icon is located at `app/src/main/res/drawable/ic_wifi_off.xml`. You can replace `ic_wifi_off.xml` with another vector drawable.
+- **Message**: To change the text "No Internet Connection" or the error message, update the strings in `activity_main.xml` (or ideally, extract them to `strings.xml`).
+- **Layout**: You can modify the design in `app/src/main/res/layout/activity_main.xml` inside the `RelativeLayout` with ID `layoutError`.

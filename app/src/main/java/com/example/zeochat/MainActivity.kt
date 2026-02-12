@@ -1,14 +1,23 @@
 package com.example.zeochat
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
 import android.os.Bundle
+import android.view.View
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.RelativeLayout
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var layoutError: RelativeLayout
+    private lateinit var btnRetry: Button
+    private var isError = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -16,16 +25,55 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         webView = findViewById(R.id.webView)
-
-        webView.webViewClient = WebViewClient()
+        layoutError = findViewById(R.id.layoutError)
+        btnRetry = findViewById(R.id.btnRetry)
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.loadsImagesAutomatically = true
         webView.settings.allowFileAccess = true
-        
+
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                isError = false
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                isError = true
+                showErrorScreen()
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                if (!isError) {
+                    showWebView()
+                }
+            }
+        }
+
         val url = getString(R.string.website_url)
         webView.loadUrl(url)
+
+        btnRetry.setOnClickListener {
+            showWebView()
+            webView.reload()
+        }
+    }
+
+    private fun showErrorScreen() {
+        webView.visibility = View.GONE
+        layoutError.visibility = View.VISIBLE
+    }
+
+    private fun showWebView() {
+        layoutError.visibility = View.GONE
+        webView.visibility = View.VISIBLE
     }
 
     override fun onBackPressed() {
