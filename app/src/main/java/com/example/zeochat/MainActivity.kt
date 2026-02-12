@@ -12,6 +12,12 @@ import android.widget.Button
 import android.widget.RelativeLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import android.Manifest
+import android.content.pm.PackageManager
+import android.webkit.PermissionRequest
+import android.webkit.WebChromeClient
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -48,9 +54,11 @@ class MainActivity : AppCompatActivity() {
                 error: WebResourceError?
             ) {
                 super.onReceivedError(view, request, error)
-                isError = true
-                showErrorScreen()
-                swipeRefresh.isRefreshing = false
+                if (request?.isForMainFrame == true) {
+                    isError = true
+                    showErrorScreen()
+                    swipeRefresh.isRefreshing = false
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -61,6 +69,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onPermissionRequest(request: PermissionRequest) {
+                request.grant(request.resources)
+            }
+        }
+
+        checkPermissions()
 
         val url = getString(R.string.website_url)
         webView.loadUrl(url)
@@ -92,5 +108,28 @@ class MainActivity : AppCompatActivity() {
         } else {
             super.onBackPressed()
         }
+    }
+
+    private fun checkPermissions() {
+        val permissions = arrayOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.MODIFY_AUDIO_SETTINGS
+        )
+
+        val listPermissionsNeeded = ArrayList<String>()
+        for (permission in permissions) {
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                listPermissionsNeeded.add(permission)
+            }
+        }
+
+        if (listPermissionsNeeded.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, listPermissionsNeeded.toTypedArray(), PERMISSION_REQUEST_CODE)
+        }
+    }
+
+    companion object {
+        private const val PERMISSION_REQUEST_CODE = 123
     }
 }
