@@ -11,12 +11,14 @@ import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.RelativeLayout
 import androidx.appcompat.app.AppCompatActivity
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var layoutError: RelativeLayout
     private lateinit var btnRetry: Button
+    private lateinit var swipeRefresh: SwipeRefreshLayout
     private var isError = false
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -27,6 +29,7 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         layoutError = findViewById(R.id.layoutError)
         btnRetry = findViewById(R.id.btnRetry)
+        swipeRefresh = findViewById(R.id.swipeRefresh)
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -47,10 +50,12 @@ class MainActivity : AppCompatActivity() {
                 super.onReceivedError(view, request, error)
                 isError = true
                 showErrorScreen()
+                swipeRefresh.isRefreshing = false
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                swipeRefresh.isRefreshing = false
                 if (!isError) {
                     showWebView()
                 }
@@ -62,6 +67,11 @@ class MainActivity : AppCompatActivity() {
 
         btnRetry.setOnClickListener {
             showWebView()
+            webView.reload()
+        }
+
+        swipeRefresh.setOnRefreshListener {
+            webView.clearCache(true)
             webView.reload()
         }
     }

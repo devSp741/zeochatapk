@@ -56,3 +56,4 @@ captures/
 *.pem
 *.p12
 *.key
+.vscode
