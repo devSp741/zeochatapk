@@ -19,6 +19,13 @@ import android.webkit.WebChromeClient
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
+import com.onesignal.OneSignal
+import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
+import com.onesignal.user.subscriptions.IPushSubscriptionObserver
+import com.onesignal.user.subscriptions.PushSubscriptionChangedState
+import androidx.activity.OnBackPressedCallback
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
@@ -26,11 +33,28 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnRetry: Button
     private lateinit var swipeRefresh: SwipeRefreshLayout
     private var isError = false
+    private var isPageFinished = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        // Request OneSignal Notification Permission
+        lifecycleScope.launch {
+            OneSignal.Notifications.requestPermission(true)
+        }
+
+        // Observer to handle OneSignal ID changes/availability
+        OneSignal.User.pushSubscription.addObserver(object : IPushSubscriptionObserver {
+            override fun onPushSubscriptionChange(state: PushSubscriptionChangedState) {
+                if (state.current.id != null) {
+                    runOnUiThread {
+                        injectOneSignalId()
+                    }
+                }
+            }
+        })
 
         webView = findViewById(R.id.webView)
         layoutError = findViewById(R.id.layoutError)
@@ -46,6 +70,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 isError = false
+                isPageFinished = false
             }
 
             override fun onReceivedError(
@@ -64,8 +89,11 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 swipeRefresh.isRefreshing = false
+                isPageFinished = true
                 if (!isError) {
                     showWebView()
+                    injectOneSignalId()
+                    syncOneSignalInit()
                 }
             }
         }
@@ -90,6 +118,17 @@ class MainActivity : AppCompatActivity() {
             webView.clearCache(true)
             webView.reload()
         }
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (::webView.isInitialized && webView.canGoBack()) {
+                    webView.goBack()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
     }
 
     private fun showErrorScreen() {
@@ -102,13 +141,7 @@ class MainActivity : AppCompatActivity() {
         webView.visibility = View.VISIBLE
     }
 
-    override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
-        } else {
-            super.onBackPressed()
-        }
-    }
+
 
     private fun checkPermissions() {
         val permissions = arrayOf(
@@ -126,6 +159,39 @@ class MainActivity : AppCompatActivity() {
 
         if (listPermissionsNeeded.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, listPermissionsNeeded.toTypedArray(), PERMISSION_REQUEST_CODE)
+        }
+    }
+
+    private fun injectOneSignalId() {
+        val userId = OneSignal.User.pushSubscription.id
+        if (!userId.isNullOrEmpty() && ::webView.isInitialized && isPageFinished && !isError) {
+            val script = "javascript:try{saveAndroidOneSignalUserId('$userId');}catch(e){console.log('OneSignal Sync Error: ' + e);}"
+            webView.evaluateJavascript(script, null)
+        }
+    }
+
+    private fun syncOneSignalInit() {
+        if (::webView.isInitialized && isPageFinished && !isError) {
+            // Fetch onesignal_app_id from the webpage JS variable
+            webView.evaluateJavascript("javascript:onesignal_app_id") { value ->
+                if (value != null && value != "null" && value != "undefined") {
+                    // Value comes back as a string with quotes, e.g., "\"123...\""
+                    val appId = value.replace("\"", "")
+                    
+                    val sharedPref = applicationContext.getSharedPreferences("ZeoChatPrefs", MODE_PRIVATE)
+                    val savedAppId = sharedPref.getString("onesignal_app_id", "")
+
+                    if (appId.isNotEmpty() && appId != savedAppId) {
+                        // Save new ID
+                        with(sharedPref.edit()) {
+                            putString("onesignal_app_id", appId)
+                            apply()
+                        }
+                        // Re-init OneSignal with new ID
+                        OneSignal.initWithContext(applicationContext, appId)
+                    }
+                }
+            }
         }
     }
 
