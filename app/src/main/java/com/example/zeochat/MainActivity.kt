@@ -26,6 +26,11 @@ import com.onesignal.user.subscriptions.IPushSubscriptionObserver
 import com.onesignal.user.subscriptions.PushSubscriptionChangedState
 import androidx.activity.OnBackPressedCallback
 
+import android.webkit.ValueCallback
+import android.net.Uri
+import android.content.Intent
+import androidx.activity.result.contract.ActivityResultContracts
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
@@ -35,26 +40,44 @@ class MainActivity : AppCompatActivity() {
     private var isError = false
     private var isPageFinished = false
 
+    // Variable to hold the callback for file upload
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+
+    // ActivityResultLauncher for handling file picker result
+    private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val data = result.data
+            var results: Array<Uri>? = null
+            if (data != null) {
+                val dataString = data.dataString
+                val clipData = data.clipData
+                if (clipData != null) {
+                    results = Array(clipData.itemCount) { i ->
+                        clipData.getItemAt(i).uri
+                    }
+                } else if (dataString != null) {
+                    results = arrayOf(Uri.parse(dataString))
+                }
+            }
+            filePathCallback?.onReceiveValue(results)
+        } else {
+            filePathCallback?.onReceiveValue(null)
+        }
+        filePathCallback = null
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Request OneSignal Notification Permission
-        lifecycleScope.launch {
-            OneSignal.Notifications.requestPermission(true)
-        }
+        // Check if OneSignal App ID is already saved
+        val sharedPref = getSharedPreferences("ZeoChatPrefs", MODE_PRIVATE)
+        val savedAppId = sharedPref.getString("onesignal_app_id", "")
 
-        // Observer to handle OneSignal ID changes/availability
-        OneSignal.User.pushSubscription.addObserver(object : IPushSubscriptionObserver {
-            override fun onPushSubscriptionChange(state: PushSubscriptionChangedState) {
-                if (state.current.id != null) {
-                    runOnUiThread {
-                        injectOneSignalId()
-                    }
-                }
-            }
-        })
+        if (!savedAppId.isNullOrEmpty()) {
+            setupOneSignalObserver()
+        }
 
         webView = findViewById(R.id.webView)
         layoutError = findViewById(R.id.layoutError)
@@ -65,6 +88,7 @@ class MainActivity : AppCompatActivity() {
         webView.settings.domStorageEnabled = true
         webView.settings.loadsImagesAutomatically = true
         webView.settings.allowFileAccess = true
+        webView.settings.allowContentAccess = true
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -102,6 +126,40 @@ class MainActivity : AppCompatActivity() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 request.grant(request.resources)
             }
+
+            // Handle file upload requests
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                // Cancel existing callback if any
+                this@MainActivity.filePathCallback?.onReceiveValue(null)
+                this@MainActivity.filePathCallback = filePathCallback
+
+                val intent = Intent(Intent.ACTION_GET_CONTENT)
+                intent.addCategory(Intent.CATEGORY_OPENABLE)
+                intent.type = "*/*" // Accept all file types, can be specific like "image/*"
+                
+                //Allow multiple file selection if supported
+                 if (fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                }
+                
+                // Specific MIME types from the web page input
+                val mimeTypes = fileChooserParams?.acceptTypes
+                if (mimeTypes != null && mimeTypes.isNotEmpty()) {
+                     intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+                }
+
+                try {
+                    filePickerLauncher.launch(Intent.createChooser(intent, "Select File"))
+                } catch (e: Exception) {
+                    this@MainActivity.filePathCallback = null
+                    return false
+                }
+                return true
+            }
         }
 
         checkPermissions()
@@ -131,6 +189,24 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    private fun setupOneSignalObserver() {
+        // Request OneSignal Notification Permission
+        lifecycleScope.launch {
+            OneSignal.Notifications.requestPermission(true)
+        }
+
+        // Observer to handle OneSignal ID changes/availability
+        OneSignal.User.pushSubscription.addObserver(object : IPushSubscriptionObserver {
+            override fun onPushSubscriptionChange(state: PushSubscriptionChangedState) {
+                if (state.current.id != null) {
+                    runOnUiThread {
+                        injectOneSignalId()
+                    }
+                }
+            }
+        })
+    }
+
     private fun showErrorScreen() {
         webView.visibility = View.GONE
         layoutError.visibility = View.VISIBLE
@@ -147,11 +223,17 @@ class MainActivity : AppCompatActivity() {
         val permissions = arrayOf(
             Manifest.permission.CAMERA,
             Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.MODIFY_AUDIO_SETTINGS
+            Manifest.permission.MODIFY_AUDIO_SETTINGS,
+            Manifest.permission.READ_EXTERNAL_STORAGE, // For older Android versions
+             // For Android 13+ (Tiramisu)
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VIDEO,
+             Manifest.permission.READ_MEDIA_AUDIO
         )
 
         val listPermissionsNeeded = ArrayList<String>()
         for (permission in permissions) {
+             // Basic check, robust implementation would check SDK version
             if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
                 listPermissionsNeeded.add(permission)
             }
@@ -163,10 +245,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun injectOneSignalId() {
-        val userId = OneSignal.User.pushSubscription.id
-        if (!userId.isNullOrEmpty() && ::webView.isInitialized && isPageFinished && !isError) {
-            val script = "javascript:try{saveAndroidOneSignalUserId('$userId');}catch(e){console.log('OneSignal Sync Error: ' + e);}"
-            webView.evaluateJavascript(script, null)
+        try {
+            val userId = OneSignal.User.pushSubscription.id
+            if (!userId.isNullOrEmpty() && ::webView.isInitialized && isPageFinished && !isError) {
+                val script = "javascript:try{saveAndroidOneSignalUserId('$userId');}catch(e){console.log('OneSignal Sync Error: ' + e);}"
+                webView.evaluateJavascript(script, null)
+            }
+        } catch (e: Exception) {
+            // OneSignal might not be initialized yet
         }
     }
 
@@ -189,6 +275,11 @@ class MainActivity : AppCompatActivity() {
                         }
                         // Re-init OneSignal with new ID
                         OneSignal.initWithContext(applicationContext, appId)
+                        
+                        // Setup observer now that we are initialized
+                        setupOneSignalObserver()
+                        // Try to inject ID immediately if available
+                        injectOneSignalId()
                     }
                 }
             }
